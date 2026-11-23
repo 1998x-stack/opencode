@@ -25,6 +25,7 @@ export const SettingsSkillStore: Component<{ directory?: string; onRuntimeRefres
   const data = useData()
   const rpc = () => serverSdk.api.rpc(SkillStoreRPC)
   let searchRequest = 0
+  let detailRequest = 0
   const locationDirectory = createMemo(() => props.directory ?? data.location.default().directory)
   const [state, setState] = createStore({
     view: "discover" as View, query: "", loading: false, configured: true, error: "",
@@ -111,8 +112,14 @@ export const SettingsSkillStore: Component<{ directory?: string; onRuntimeRefres
     }
   }
   const detail = async (asset: AssetSummary) => {
-    try { setState("detail", await (rpc().catalogDetail({ assetId: asset.assetId }, { location: { directory: locationDirectory() } }) as Promise<AssetDetail>)) }
-    catch (error) { showToast({ title: language.t("common.requestFailed"), description: formatServerError(error, language.t) }) }
+    const request = ++detailRequest
+    try {
+      const result = await (rpc().catalogDetail({ assetId: asset.assetId }, { location: { directory: locationDirectory() } }) as Promise<AssetDetail>)
+      if (request === detailRequest) setState("detail", result)
+    } catch (error) {
+      if (request === detailRequest)
+        showToast({ title: language.t("common.requestFailed"), description: formatServerError(error, language.t) })
+    }
   }
 
   createEffect(() => {
@@ -209,6 +216,7 @@ export const SettingsSkillStore: Component<{ directory?: string; onRuntimeRefres
                 <div class="flex items-center justify-between gap-3 rounded-lg border border-border-base p-3">
                   <div class="min-w-0">
                     <div class="text-13-medium">{item.title}</div>
+                    <div class="mt-1 text-12-regular text-v2-text-text-muted">{item.description}</div>
                     <div class="mt-1 text-11-regular text-v2-text-text-muted">{language.t("skillStore.version", { version: item.version })} · {item.runtimeSkillId}</div>
                     <Show when={available()}>{(updateInfo) => <div class="mt-1 text-11-regular text-v2-text-text-muted">{language.t("skillStore.updateAvailable", { version: updateInfo().latestVersion })}</div>}</Show>
                     <Show when={item.status !== "installed"}><div class="mt-1 text-11-regular text-text-danger">{item.status}</div></Show>
