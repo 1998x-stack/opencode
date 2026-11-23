@@ -43,6 +43,13 @@ export const SettingsSkillStore: Component<{ directory?: string; onRuntimeRefres
     setState("installations", installed.items)
     setState("operations", operations.items)
   }
+  const refreshInstalledQuietly = async () => {
+    try {
+      await refreshInstalled()
+    } catch (error) {
+      setState("error", formatServerError(error, language.t))
+    }
+  }
   const search = async () => {
     const request = ++searchRequest
     const query = untrack(() => state.query)
@@ -63,8 +70,8 @@ export const SettingsSkillStore: Component<{ directory?: string; onRuntimeRefres
     setBusy(asset.assetId, true)
     try {
       await rpc().installStart({ assetId: asset.assetId, version, idempotencyKey: uuid() }, { location: { directory: locationDirectory() } })
-      await refreshInstalled()
       setState("view", "installed")
+      void refreshInstalledQuietly()
     } catch (error) {
       showToast({ title: language.t("common.requestFailed"), description: formatServerError(error, language.t) })
     } finally { setBusy(asset.assetId, false) }
@@ -73,7 +80,7 @@ export const SettingsSkillStore: Component<{ directory?: string; onRuntimeRefres
     setBusy(item.installationId, true)
     try {
       await rpc().installStart({ assetId: item.assetId, version, idempotencyKey: uuid() }, { location: { directory: locationDirectory() } })
-      await refreshInstalled()
+      void refreshInstalledQuietly()
     } catch (error) {
       showToast({ title: language.t("common.requestFailed"), description: formatServerError(error, language.t) })
     } finally { setBusy(item.installationId, false) }
@@ -82,8 +89,8 @@ export const SettingsSkillStore: Component<{ directory?: string; onRuntimeRefres
     setBusy(item.installationId, true)
     try {
       await rpc().installationSetEnabled({ installationId: item.installationId, enabled: !item.enabled }, { location: { directory: locationDirectory() } })
-      await refreshInstalled()
       props.onRuntimeRefresh()
+      void refreshInstalledQuietly()
     } catch (error) {
       showToast({ title: language.t("common.requestFailed"), description: formatServerError(error, language.t) })
     } finally { setBusy(item.installationId, false) }
@@ -92,14 +99,14 @@ export const SettingsSkillStore: Component<{ directory?: string; onRuntimeRefres
     setBusy(item.installationId, true)
     try {
       await rpc().installationUninstall({ installationId: item.installationId }, { location: { directory: locationDirectory() } })
-      await refreshInstalled()
       props.onRuntimeRefresh()
+      void refreshInstalledQuietly()
     } catch (error) {
       showToast({ title: language.t("common.requestFailed"), description: formatServerError(error, language.t) })
     } finally { setBusy(item.installationId, false) }
   }
   const cancelOperation = async (operationId: string) => {
-    try { await rpc().operationCancel({ operationId }, { location: { directory: locationDirectory() } }); await refreshInstalled() }
+    try { await rpc().operationCancel({ operationId }, { location: { directory: locationDirectory() } }); void refreshInstalledQuietly() }
     catch (error) { showToast({ title: language.t("common.requestFailed"), description: formatServerError(error, language.t) }) }
   }
   const checkUpdates = async () => {
@@ -125,7 +132,7 @@ export const SettingsSkillStore: Component<{ directory?: string; onRuntimeRefres
   createEffect(() => {
     if (serverSdk.connection.status() !== "connected") return
     const client = rpc()
-    void refreshInstalled().catch((error) => setState("error", formatServerError(error, language.t)))
+    void refreshInstalledQuietly()
     const stopProgress = client.events.on("operationProgress", (event) => {
       if (event.location.directory !== locationDirectory()) return
       // SAFETY: OpenCode Server validates this event against SkillStoreRPC.operationProgress.
@@ -135,13 +142,13 @@ export const SettingsSkillStore: Component<{ directory?: string; onRuntimeRefres
         return index === -1 ? [...items, operation] : items.map((item) => item.operationId === operation.operationId ? operation : item)
       })
       if (["installed", "failed", "cancelled", "interrupted"].includes(operation.state)) {
-        void refreshInstalled()
+        void refreshInstalledQuietly()
         if (operation.state === "installed") props.onRuntimeRefresh()
       }
     })
     const stopInstalled = client.events.on("installationChanged", (event) => {
       if (event.location.directory !== locationDirectory()) return
-      void refreshInstalled()
+      void refreshInstalledQuietly()
       props.onRuntimeRefresh()
     })
     onCleanup(() => { stopProgress(); stopInstalled() })
