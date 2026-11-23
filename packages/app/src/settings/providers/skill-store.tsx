@@ -12,6 +12,12 @@ import { showToast } from "@/shell/notifications/toast"
 import { SkillStoreRPC, type AssetDetail, type AssetSummary, type Installation, type Operation } from "./skill-store-rpc"
 
 type View = "discover" | "installed"
+// The server validates the portable JSON Schema; the Promise RPC interface types its values as unknown.
+type SearchResult = { configured: boolean; items: AssetSummary[]; nextCursor: string | null }
+type InstalledResult = { items: Installation[] }
+type OperationsResult = { items: Operation[] }
+type UpdateResult = { updates: Array<{ installationId: string; assetId: string; currentVersion: string; latestVersion: string }> }
+
 
 export const SettingsSkillStore: Component<{ directory?: string; onRuntimeRefresh: () => void }> = (props) => {
   const language = useLanguage()
@@ -28,7 +34,10 @@ export const SettingsSkillStore: Component<{ directory?: string; onRuntimeRefres
   const busy = (id: string) => state.busy.includes(id)
   const setBusy = (id: string, value: boolean) => setState("busy", (items) => value ? [...new Set([...items, id])] : items.filter((item) => item !== id))
   const refreshInstalled = async () => {
-    const [installed, operations] = await Promise.all([rpc().installationList({}), rpc().operationList({})])
+    const [installed, operations] = await Promise.all([
+      rpc().installationList({}) as Promise<InstalledResult>,
+      rpc().operationList({}) as Promise<OperationsResult>,
+    ])
     setState("installations", installed.items)
     setState("operations", operations.items)
   }
@@ -36,7 +45,7 @@ export const SettingsSkillStore: Component<{ directory?: string; onRuntimeRefres
     setState("loading", true)
     setState("error", "")
     try {
-      const result = await rpc().catalogSearch({ query: state.query, limit: 24 })
+      const result = await (rpc().catalogSearch({ query: state.query, limit: 24 }) as Promise<SearchResult>)
       setState("configured", result.configured)
       setState("items", result.items)
     } catch (error) {
@@ -90,7 +99,7 @@ export const SettingsSkillStore: Component<{ directory?: string; onRuntimeRefres
   }
   const checkUpdates = async () => {
     try {
-      const result = await rpc().updateCheck({})
+      const result = await (rpc().updateCheck({}) as Promise<UpdateResult>)
       setState("updates", result.updates)
       showToast({ title: language.t("skillStore.updateCheck"), description: language.t("skillStore.updatesFound", { count: result.updates.length }) })
     } catch (error) {
@@ -98,7 +107,7 @@ export const SettingsSkillStore: Component<{ directory?: string; onRuntimeRefres
     }
   }
   const detail = async (asset: AssetSummary) => {
-    try { setState("detail", await rpc().catalogDetail({ assetId: asset.assetId })) }
+    try { setState("detail", await (rpc().catalogDetail({ assetId: asset.assetId }) as Promise<AssetDetail>)) }
     catch (error) { showToast({ title: language.t("common.requestFailed"), description: formatServerError(error, language.t) }) }
   }
 
@@ -108,13 +117,15 @@ export const SettingsSkillStore: Component<{ directory?: string; onRuntimeRefres
     void refreshInstalled().catch((error) => setState("error", formatServerError(error, language.t)))
     const stopProgress = client.events.on("operationProgress", (event) => {
       if (event.location.directory !== locationDirectory()) return
+      // SAFETY: OpenCode Server validates this event against SkillStoreRPC.operationProgress.
+      const operation = event.data as Operation
       setState("operations", (items) => {
-        const index = items.findIndex((item) => item.operationId === event.data.operationId)
-        return index === -1 ? [...items, event.data] : items.map((item) => item.operationId === event.data.operationId ? event.data : item)
+        const index = items.findIndex((item) => item.operationId === operation.operationId)
+        return index === -1 ? [...items, operation] : items.map((item) => item.operationId === operation.operationId ? operation : item)
       })
-      if (["installed", "failed", "cancelled", "interrupted"].includes(event.data.state)) {
+      if (["installed", "failed", "cancelled", "interrupted"].includes(operation.state)) {
         void refreshInstalled()
-        if (event.data.state === "installed") props.onRuntimeRefresh()
+        if (operation.state === "installed") props.onRuntimeRefresh()
       }
     })
     const stopInstalled = client.events.on("installationChanged", (event) => {
@@ -125,7 +136,8 @@ export const SettingsSkillStore: Component<{ directory?: string; onRuntimeRefres
     onCleanup(() => { stopProgress(); stopInstalled() })
   })
   createEffect(() => {
-    if (state.view === "discover" && serverSdk.connection.status() === "connected") void search()
+    if (state.view !== "discover" || serverSdk.connection.status() !== "connected") return
+    void search()
   })
 
   return (
