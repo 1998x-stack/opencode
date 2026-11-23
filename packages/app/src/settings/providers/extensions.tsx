@@ -33,6 +33,7 @@ import { SettingsList } from "@/settings/list"
 import { createExtensionLoad, ExtensionLoadFailed } from "@/settings/extension-load"
 import type { SettingsView } from "@/settings/surface"
 import { ConsoleName, ConsoleReplaced, createConsoleSources } from "./console-link"
+import { SettingsSkillStore } from "./skill-store"
 import {
   createPluginUpdateState,
   pluginUpdateChecking,
@@ -409,6 +410,10 @@ export const SettingsExtensions: Component<{
                   }}
                 </For>
               </SettingsList>
+              <SettingsSkillStore
+                directory={props.directory}
+                onRuntimeRefresh={() => void data.location.skill.sync().catch(() => undefined)}
+              />
               <Show when={sources.view().status === "error"}>
                 <ExtensionLoadFailed
                   message={language.t("settings.extensions.sources.loadFailed")}
