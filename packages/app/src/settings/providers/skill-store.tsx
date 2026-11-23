@@ -35,8 +35,8 @@ export const SettingsSkillStore: Component<{ directory?: string; onRuntimeRefres
   const setBusy = (id: string, value: boolean) => setState("busy", (items) => value ? [...new Set([...items, id])] : items.filter((item) => item !== id))
   const refreshInstalled = async () => {
     const [installed, operations] = await Promise.all([
-      rpc().installationList({}) as Promise<InstalledResult>,
-      rpc().operationList({}) as Promise<OperationsResult>,
+      rpc().installationList({}, { location: { directory: locationDirectory() } }) as Promise<InstalledResult>,
+      rpc().operationList({}, { location: { directory: locationDirectory() } }) as Promise<OperationsResult>,
     ])
     setState("installations", installed.items)
     setState("operations", operations.items)
@@ -45,7 +45,7 @@ export const SettingsSkillStore: Component<{ directory?: string; onRuntimeRefres
     setState("loading", true)
     setState("error", "")
     try {
-      const result = await (rpc().catalogSearch({ query: state.query, limit: 24 }) as Promise<SearchResult>)
+      const result = await (rpc().catalogSearch({ query: state.query, limit: 24 }, { location: { directory: locationDirectory() } }) as Promise<SearchResult>)
       setState("configured", result.configured)
       setState("items", result.items)
     } catch (error) {
@@ -57,7 +57,7 @@ export const SettingsSkillStore: Component<{ directory?: string; onRuntimeRefres
   const install = async (asset: AssetSummary, version?: string) => {
     setBusy(asset.assetId, true)
     try {
-      await rpc().installStart({ assetId: asset.assetId, version, idempotencyKey: uuid() })
+      await rpc().installStart({ assetId: asset.assetId, version, idempotencyKey: uuid() }, { location: { directory: locationDirectory() } })
       await refreshInstalled()
       setState("view", "installed")
     } catch (error) {
@@ -67,7 +67,7 @@ export const SettingsSkillStore: Component<{ directory?: string; onRuntimeRefres
   const installUpdate = async (item: Installation, version: string) => {
     setBusy(item.installationId, true)
     try {
-      await rpc().installStart({ assetId: item.assetId, version, idempotencyKey: uuid() })
+      await rpc().installStart({ assetId: item.assetId, version, idempotencyKey: uuid() }, { location: { directory: locationDirectory() } })
       await refreshInstalled()
     } catch (error) {
       showToast({ title: language.t("common.requestFailed"), description: formatServerError(error, language.t) })
@@ -76,7 +76,7 @@ export const SettingsSkillStore: Component<{ directory?: string; onRuntimeRefres
   const toggle = async (item: Installation) => {
     setBusy(item.installationId, true)
     try {
-      await rpc().installationSetEnabled({ installationId: item.installationId, enabled: !item.enabled })
+      await rpc().installationSetEnabled({ installationId: item.installationId, enabled: !item.enabled }, { location: { directory: locationDirectory() } })
       await refreshInstalled()
       props.onRuntimeRefresh()
     } catch (error) {
@@ -86,7 +86,7 @@ export const SettingsSkillStore: Component<{ directory?: string; onRuntimeRefres
   const remove = async (item: Installation) => {
     setBusy(item.installationId, true)
     try {
-      await rpc().installationUninstall({ installationId: item.installationId })
+      await rpc().installationUninstall({ installationId: item.installationId }, { location: { directory: locationDirectory() } })
       await refreshInstalled()
       props.onRuntimeRefresh()
     } catch (error) {
@@ -94,12 +94,12 @@ export const SettingsSkillStore: Component<{ directory?: string; onRuntimeRefres
     } finally { setBusy(item.installationId, false) }
   }
   const cancelOperation = async (operationId: string) => {
-    try { await rpc().operationCancel({ operationId }); await refreshInstalled() }
+    try { await rpc().operationCancel({ operationId }, { location: { directory: locationDirectory() } }); await refreshInstalled() }
     catch (error) { showToast({ title: language.t("common.requestFailed"), description: formatServerError(error, language.t) }) }
   }
   const checkUpdates = async () => {
     try {
-      const result = await (rpc().updateCheck({}) as Promise<UpdateResult>)
+      const result = await (rpc().updateCheck({}, { location: { directory: locationDirectory() } }) as Promise<UpdateResult>)
       setState("updates", result.updates)
       showToast({ title: language.t("skillStore.updateCheck"), description: language.t("skillStore.updatesFound", { count: result.updates.length }) })
     } catch (error) {
@@ -107,7 +107,7 @@ export const SettingsSkillStore: Component<{ directory?: string; onRuntimeRefres
     }
   }
   const detail = async (asset: AssetSummary) => {
-    try { setState("detail", await (rpc().catalogDetail({ assetId: asset.assetId }) as Promise<AssetDetail>)) }
+    try { setState("detail", await (rpc().catalogDetail({ assetId: asset.assetId }, { location: { directory: locationDirectory() } }) as Promise<AssetDetail>)) }
     catch (error) { showToast({ title: language.t("common.requestFailed"), description: formatServerError(error, language.t) }) }
   }
 
