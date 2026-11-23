@@ -10,7 +10,7 @@ const asset = object({ assetId: string, title: string, description: string, kind
 const packageInfo = object({ packageId: string, version: string, platform: string, arch: string, sizeBytes: integer, sha256: string }, ["packageId", "version", "platform", "arch", "sizeBytes", "sha256"])
 const version = object({ version: string, packages: { type: "array", items: packageInfo } }, ["version", "packages"])
 const installation = object({
-  installationId: string, assetId: string, runtimeSkillId: string, title: string, version: string, sha256: string,
+  installationId: string, assetId: string, runtimeSkillId: string, title: string, description: string, version: string, sha256: string,
   enabled: boolean, pinnedVersion: nullableString, installedAt: string, status: string,
 }, ["installationId", "assetId", "runtimeSkillId", "title", "version", "sha256", "enabled", "pinnedVersion", "installedAt", "status"])
 const operation = object({
@@ -41,5 +41,5 @@ export const SkillStoreRPC = Rpc.define({
 
 export type AssetSummary = { assetId: string; title: string; description: string; kind: string; tags: string[]; latestVersion: string | null }
 export type AssetDetail = { asset: AssetSummary; versions: Array<{ version: string; packages: unknown[] }> }
-export type Installation = { installationId: string; assetId: string; runtimeSkillId: string; title: string; version: string; sha256: string; enabled: boolean; pinnedVersion: string | null; installedAt: string; status: string }
+export type Installation = { installationId: string; assetId: string; runtimeSkillId: string; title: string; description: string; version: string; sha256: string; enabled: boolean; pinnedVersion: string | null; installedAt: string; status: string }
 export type Operation = { operationId: string; idempotencyKey: string | null; assetId: string; title: string; version: string; kind: string; state: string; stage: string; progress: number; message: string | null; error: string | null; createdAt: string; updatedAt: string }
