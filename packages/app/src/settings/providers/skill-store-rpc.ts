@@ -12,7 +12,7 @@ const version = object({ version: string, packages: { type: "array", items: pack
 const installation = object({
   installationId: string, assetId: string, runtimeSkillId: string, title: string, description: string, version: string, sha256: string,
   enabled: boolean, pinnedVersion: nullableString, installedAt: string, status: string,
-}, ["installationId", "assetId", "runtimeSkillId", "title", "version", "sha256", "enabled", "pinnedVersion", "installedAt", "status"])
+}, ["installationId", "assetId", "runtimeSkillId", "title", "description", "version", "sha256", "enabled", "pinnedVersion", "installedAt", "status"])
 const operation = object({
   operationId: string, idempotencyKey: nullableString, assetId: string, title: string, version: string, kind: string,
   state: string, stage: string, progress: integer, message: nullableString, error: nullableString, createdAt: string, updatedAt: string,
