@@ -2,7 +2,7 @@ import { Button } from "@opencode/ui/button"
 import { Icon } from "@opencode/ui/icon"
 import { Tabs } from "@opencode/ui/tabs"
 import { uuid } from "@opencode/util/uuid"
-import { createEffect, createMemo, For, onCleanup, Show, type Component } from "solid-js"
+import { createEffect, createMemo, For, onCleanup, Show, untrack, type Component } from "solid-js"
 import { createStore } from "solid-js/store"
 import { useLanguage } from "@/runtime/i18n/language"
 import { useServerSDK } from "@/runtime/server/client"
@@ -24,6 +24,7 @@ export const SettingsSkillStore: Component<{ directory?: string; onRuntimeRefres
   const serverSdk = useServerSDK()
   const data = useData()
   const rpc = () => serverSdk.api.rpc(SkillStoreRPC)
+  let searchRequest = 0
   const locationDirectory = createMemo(() => props.directory ?? data.location.default().directory)
   const [state, setState] = createStore({
     view: "discover" as View, query: "", loading: false, configured: true, error: "",
@@ -42,16 +43,19 @@ export const SettingsSkillStore: Component<{ directory?: string; onRuntimeRefres
     setState("operations", operations.items)
   }
   const search = async () => {
+    const request = ++searchRequest
+    const query = untrack(() => state.query)
     setState("loading", true)
     setState("error", "")
     try {
-      const result = await (rpc().catalogSearch({ query: state.query, limit: 24 }, { location: { directory: locationDirectory() } }) as Promise<SearchResult>)
+      const result = await (rpc().catalogSearch({ query, limit: 24 }, { location: { directory: locationDirectory() } }) as Promise<SearchResult>)
+      if (request !== searchRequest) return
       setState("configured", result.configured)
       setState("items", result.items)
     } catch (error) {
-      setState("error", formatServerError(error, language.t))
+      if (request === searchRequest) setState("error", formatServerError(error, language.t))
     } finally {
-      setState("loading", false)
+      if (request === searchRequest) setState("loading", false)
     }
   }
   const install = async (asset: AssetSummary, version?: string) => {
@@ -218,17 +222,26 @@ export const SettingsSkillStore: Component<{ directory?: string; onRuntimeRefres
               )
             }}</For>
           </div>
-          <Show when={state.operations.some((item) => item.state === "queued" || item.state === "running")}>
+          <Show when={state.operations.length > 0}>
             <div class="mt-4 border-t border-border-base pt-3">
               <div class="text-12-medium">{language.t("skillStore.operations")}</div>
-              <For each={state.operations.filter((item) => item.state === "queued" || item.state === "running")}>{(operation) => (
-                <div class="mt-2 rounded-md bg-background-base p-2 text-12-regular">
-                  <div class="flex justify-between gap-3"><span>{operation.title} · {operation.stage}</span><span>{operation.progress}%</span></div>
-                  <div class="mt-1 text-11-regular text-v2-text-text-muted">{operation.message}</div>
-                  <div class="mt-2 h-1 overflow-hidden rounded bg-border-base"><div class="h-full bg-icon-strong" style={{ width: operation.progress + "%" }} /></div>
-                  <Button size="small" variant="ghost-muted" onClick={() => void cancelOperation(operation.operationId)}>{language.t("common.cancel")}</Button>
-                </div>
-              )}</For>
+              <For each={state.operations.slice(0, 5)}>{(operation) => {
+                const active = () => operation.state === "queued" || operation.state === "running"
+                const failed = () => operation.state === "failed" || operation.state === "interrupted"
+                return (
+                  <div class="mt-2 rounded-md bg-background-base p-2 text-12-regular" data-state={operation.state}>
+                    <div class="flex justify-between gap-3">
+                      <span>{operation.title} · {operation.stage}</span>
+                      <span class={failed() ? "text-text-danger" : "text-v2-text-text-muted"}>{operation.state}{active() ? " · " + operation.progress + "%" : ""}</span>
+                    </div>
+                    <div class="mt-1 text-11-regular text-v2-text-text-muted">{operation.error || operation.message}</div>
+                    <Show when={active()}>
+                      <div class="mt-2 h-1 overflow-hidden rounded bg-border-base"><div class="h-full bg-icon-strong" style={{ width: operation.progress + "%" }} /></div>
+                      <Button size="small" variant="ghost-muted" onClick={() => void cancelOperation(operation.operationId)}>{language.t("common.cancel")}</Button>
+                    </Show>
+                  </div>
+                )
+              }}</For>
             </div>
           </Show>
         </Tabs.Content>
