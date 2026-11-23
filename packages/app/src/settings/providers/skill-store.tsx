@@ -42,10 +42,16 @@ export const SettingsSkillStore: Component<{ directory?: string; onRuntimeRefres
     ])
     setState("installations", installed.items)
     setState("operations", operations.items)
+    return operations.items
   }
-  const refreshInstalledQuietly = async () => {
+  const refreshInstalledQuietly = async (operationId?: string) => {
     try {
-      await refreshInstalled()
+      const operations = await refreshInstalled()
+      // The public event Location omits workspaceID. Re-read this plugin Location's
+      // durable RPC state instead of merging event payloads into the current UI.
+      if (operationId && operations.some((item) => item.operationId === operationId && item.state === "installed")) {
+        props.onRuntimeRefresh()
+      }
     } catch (error) {
       setState("error", formatServerError(error, language.t))
     }
@@ -136,15 +142,10 @@ export const SettingsSkillStore: Component<{ directory?: string; onRuntimeRefres
     const stopProgress = client.events.on("operationProgress", (event) => {
       if (event.location.directory !== locationDirectory()) return
       // SAFETY: OpenCode Server validates this event against SkillStoreRPC.operationProgress.
+      // Location.PublicRef intentionally omits workspaceID, so the event is only a wake-up signal.
+      // The current Location's operationList is the source of truth; never merge cross-workspace event data.
       const operation = event.data as Operation
-      setState("operations", (items) => {
-        const index = items.findIndex((item) => item.operationId === operation.operationId)
-        return index === -1 ? [...items, operation] : items.map((item) => item.operationId === operation.operationId ? operation : item)
-      })
-      if (["installed", "failed", "cancelled", "interrupted"].includes(operation.state)) {
-        void refreshInstalledQuietly()
-        if (operation.state === "installed") props.onRuntimeRefresh()
-      }
+      void refreshInstalledQuietly(operation.operationId)
     })
     const stopInstalled = client.events.on("installationChanged", (event) => {
       if (event.location.directory !== locationDirectory()) return
