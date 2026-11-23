@@ -1,0 +1,36 @@
+name: Skill Store Web Integration CI
+
+on:
+  push:
+    branches: [skill-store-ui]
+    paths:
+      - "packages/app/src/settings/providers/skill-store*"
+      - "packages/app/src/settings/providers/extensions.tsx"
+      - "packages/app/src/runtime/i18n/en.ts"
+      - ".github/workflows/skill-store-web-ci.yml"
+  pull_request:
+    paths:
+      - "packages/app/src/settings/providers/skill-store*"
+      - "packages/app/src/settings/providers/extensions.tsx"
+      - "packages/app/src/runtime/i18n/en.ts"
+      - ".github/workflows/skill-store-web-ci.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  app:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: "1.4.4"
+      - name: Install workspace
+        run: bun install --frozen-lockfile
+      - name: Typecheck OpenCode app
+        run: bun run --cwd packages/app typecheck:tsc
+      - name: Run app unit tests
+        run: bun run --cwd packages/app test:unit

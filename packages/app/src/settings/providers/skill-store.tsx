@@ -1,0 +1,267 @@
+import { Button } from "@opencode/ui/button"
+import { Icon } from "@opencode/ui/icon"
+import { Tabs } from "@opencode/ui/tabs"
+import { uuid } from "@opencode/util/uuid"
+import { createEffect, createMemo, For, onCleanup, Show, untrack, type Component } from "solid-js"
+import { createStore } from "solid-js/store"
+import { useLanguage } from "@/runtime/i18n/language"
+import { useServerSDK } from "@/runtime/server/client"
+import { useData } from "@/runtime/server/current"
+import { formatServerError } from "@/runtime/server/errors"
+import { showToast } from "@/shell/notifications/toast"
+import { SkillStoreRPC, type AssetDetail, type AssetSummary, type Installation, type Operation } from "./skill-store-rpc"
+
+type View = "discover" | "installed"
+// The server validates the portable JSON Schema; the Promise RPC interface types its values as unknown.
+type SearchResult = { configured: boolean; items: AssetSummary[]; nextCursor: string | null }
+type InstalledResult = { items: Installation[] }
+type OperationsResult = { items: Operation[] }
+type UpdateResult = { updates: Array<{ installationId: string; assetId: string; currentVersion: string; latestVersion: string }> }
+
+
+export const SettingsSkillStore: Component<{ directory?: string; onRuntimeRefresh: () => void }> = (props) => {
+  const language = useLanguage()
+  const serverSdk = useServerSDK()
+  const data = useData()
+  const rpc = () => serverSdk.api.rpc(SkillStoreRPC)
+  let searchRequest = 0
+  let detailRequest = 0
+  const locationDirectory = createMemo(() => props.directory ?? data.location.default().directory)
+  const [state, setState] = createStore({
+    view: "discover" as View, query: "", loading: false, configured: true, error: "",
+    items: [] as AssetSummary[], installations: [] as Installation[], operations: [] as Operation[],
+    updates: [] as Array<{ installationId: string; assetId: string; currentVersion: string; latestVersion: string }>,
+    detail: undefined as AssetDetail | undefined, busy: [] as string[],
+  })
+  const busy = (id: string) => state.busy.includes(id)
+  const setBusy = (id: string, value: boolean) => setState("busy", (items) => value ? [...new Set([...items, id])] : items.filter((item) => item !== id))
+  const refreshInstalled = async () => {
+    const [installed, operations] = await Promise.all([
+      rpc().installationList({}, { location: { directory: locationDirectory() } }) as Promise<InstalledResult>,
+      rpc().operationList({}, { location: { directory: locationDirectory() } }) as Promise<OperationsResult>,
+    ])
+    setState("installations", installed.items)
+    setState("operations", operations.items)
+    return operations.items
+  }
+  const refreshInstalledQuietly = async (operationId?: string) => {
+    try {
+      const operations = await refreshInstalled()
+      // The public event Location omits workspaceID. Re-read this plugin Location's
+      // durable RPC state instead of merging event payloads into the current UI.
+      if (operationId && operations.some((item) => item.operationId === operationId && item.state === "installed")) {
+        props.onRuntimeRefresh()
+      }
+    } catch (error) {
+      setState("error", formatServerError(error, language.t))
+    }
+  }
+  const search = async () => {
+    const request = ++searchRequest
+    const query = untrack(() => state.query)
+    setState("loading", true)
+    setState("error", "")
+    try {
+      const result = await (rpc().catalogSearch({ query, limit: 24 }, { location: { directory: locationDirectory() } }) as Promise<SearchResult>)
+      if (request !== searchRequest) return
+      setState("configured", result.configured)
+      setState("items", result.items)
+    } catch (error) {
+      if (request === searchRequest) setState("error", formatServerError(error, language.t))
+    } finally {
+      if (request === searchRequest) setState("loading", false)
+    }
+  }
+  const install = async (asset: AssetSummary, version?: string) => {
+    setBusy(asset.assetId, true)
+    try {
+      await rpc().installStart({ assetId: asset.assetId, version, idempotencyKey: uuid() }, { location: { directory: locationDirectory() } })
+      setState("view", "installed")
+      void refreshInstalledQuietly()
+    } catch (error) {
+      showToast({ title: language.t("common.requestFailed"), description: formatServerError(error, language.t) })
+    } finally { setBusy(asset.assetId, false) }
+  }
+  const installUpdate = async (item: Installation, version: string) => {
+    setBusy(item.installationId, true)
+    try {
+      await rpc().installStart({ assetId: item.assetId, version, idempotencyKey: uuid() }, { location: { directory: locationDirectory() } })
+      void refreshInstalledQuietly()
+    } catch (error) {
+      showToast({ title: language.t("common.requestFailed"), description: formatServerError(error, language.t) })
+    } finally { setBusy(item.installationId, false) }
+  }
+  const toggle = async (item: Installation) => {
+    setBusy(item.installationId, true)
+    try {
+      await rpc().installationSetEnabled({ installationId: item.installationId, enabled: !item.enabled }, { location: { directory: locationDirectory() } })
+      props.onRuntimeRefresh()
+      void refreshInstalledQuietly()
+    } catch (error) {
+      showToast({ title: language.t("common.requestFailed"), description: formatServerError(error, language.t) })
+    } finally { setBusy(item.installationId, false) }
+  }
+  const remove = async (item: Installation) => {
+    setBusy(item.installationId, true)
+    try {
+      await rpc().installationUninstall({ installationId: item.installationId }, { location: { directory: locationDirectory() } })
+      props.onRuntimeRefresh()
+      void refreshInstalledQuietly()
+    } catch (error) {
+      showToast({ title: language.t("common.requestFailed"), description: formatServerError(error, language.t) })
+    } finally { setBusy(item.installationId, false) }
+  }
+  const cancelOperation = async (operationId: string) => {
+    try { await rpc().operationCancel({ operationId }, { location: { directory: locationDirectory() } }); void refreshInstalledQuietly() }
+    catch (error) { showToast({ title: language.t("common.requestFailed"), description: formatServerError(error, language.t) }) }
+  }
+  const checkUpdates = async () => {
+    try {
+      const result = await (rpc().updateCheck({}, { location: { directory: locationDirectory() } }) as Promise<UpdateResult>)
+      setState("updates", result.updates)
+      showToast({ title: language.t("skillStore.updateCheck"), description: language.t("skillStore.updatesFound", { count: result.updates.length }) })
+    } catch (error) {
+      showToast({ title: language.t("common.requestFailed"), description: formatServerError(error, language.t) })
+    }
+  }
+  const detail = async (asset: AssetSummary) => {
+    const request = ++detailRequest
+    try {
+      const result = await (rpc().catalogDetail({ assetId: asset.assetId }, { location: { directory: locationDirectory() } }) as Promise<AssetDetail>)
+      if (request === detailRequest) setState("detail", result)
+    } catch (error) {
+      if (request === detailRequest)
+        showToast({ title: language.t("common.requestFailed"), description: formatServerError(error, language.t) })
+    }
+  }
+
+  createEffect(() => {
+    if (serverSdk.connection.status() !== "connected") return
+    const client = rpc()
+    void refreshInstalledQuietly()
+    const stopProgress = client.events.on("operationProgress", (event) => {
+      if (event.location.directory !== locationDirectory()) return
+      // SAFETY: OpenCode Server validates this event against SkillStoreRPC.operationProgress.
+      // Location.PublicRef intentionally omits workspaceID, so the event is only a wake-up signal.
+      // The current Location's operationList is the source of truth; never merge cross-workspace event data.
+      const operation = event.data as Operation
+      void refreshInstalledQuietly(operation.operationId)
+    })
+    const stopInstalled = client.events.on("installationChanged", (event) => {
+      if (event.location.directory !== locationDirectory()) return
+      void refreshInstalledQuietly()
+      props.onRuntimeRefresh()
+    })
+    onCleanup(() => { stopProgress(); stopInstalled() })
+  })
+  createEffect(() => {
+    if (state.view !== "discover" || serverSdk.connection.status() !== "connected") return
+    void search()
+  })
+
+  return (
+    <div class="mt-6 border-t border-border-base pt-5" data-testid="skill-store">
+      <div class="flex items-center justify-between gap-3">
+        <div class="min-w-0">
+          <h3 class="text-14-medium">{language.t("skillStore.title")}</h3>
+          <p class="mt-1 text-11-regular text-v2-text-text-muted">{language.t("skillStore.description")}</p>
+        </div>
+        <Show when={state.view === "installed"}>
+          <Button size="small" variant="ghost-muted" onClick={checkUpdates}><Icon name="refresh-cw" />{language.t("skillStore.checkUpdates")}</Button>
+        </Show>
+      </div>
+      <Tabs variant="pill" class="mt-4" value={state.view} onChange={(value) => { if (value === "discover" || value === "installed") setState("view", value) }}>
+        <Tabs.List>
+          <Tabs.Trigger value="discover">{language.t("skillStore.discover")}</Tabs.Trigger>
+          <Tabs.Trigger value="installed">{language.t("skillStore.installed")}</Tabs.Trigger>
+        </Tabs.List>
+        <Tabs.Content value="discover">
+          <div class="mt-4 flex gap-2">
+            <input class="min-w-0 flex-1 rounded-md border border-border-base bg-background-base px-3 py-2 text-13-regular"
+              type="search" aria-label={language.t("skillStore.search")} placeholder={language.t("skillStore.searchPlaceholder")}
+              value={state.query} onInput={(event) => setState("query", event.currentTarget.value)}
+              onKeyDown={(event) => { if (event.key === "Enter") void search() }} />
+            <Button size="small" variant="outline" disabled={state.loading} onClick={search}><Icon name="search" />{language.t("skillStore.search")}</Button>
+          </div>
+          <Show when={state.error}><p role="alert" class="mt-3 text-12-regular text-text-danger">{state.error}</p></Show>
+          <Show when={!state.configured}><p class="mt-3 text-12-regular text-v2-text-text-muted">{language.t("skillStore.notConfigured")}</p></Show>
+          <Show when={state.loading}><p class="mt-3 text-12-regular text-v2-text-text-muted">{language.t("common.loading")}</p></Show>
+          <Show when={!state.loading && state.configured && state.items.length === 0}><p class="mt-3 text-12-regular text-v2-text-text-muted">{language.t("skillStore.noResults")}</p></Show>
+          <div class="mt-3 grid gap-2">
+            <For each={state.items}>{(item) => (
+              <div class="rounded-lg border border-border-base p-3">
+                <div class="flex items-start justify-between gap-3">
+                  <div class="min-w-0">
+                    <div class="flex items-center gap-2"><Icon name="post-skill" class="shrink-0 text-v2-icon-icon-muted" /><span class="text-13-medium">{item.title}</span><Show when={item.latestVersion}><span class="text-11-regular text-v2-text-text-muted">{item.latestVersion}</span></Show></div>
+                    <p class="mt-2 text-12-regular text-v2-text-text-muted">{item.description}</p>
+                    <Show when={item.tags.length > 0}><p class="mt-2 text-11-regular text-v2-text-text-muted">{item.tags.join(" · ")}</p></Show>
+                  </div>
+                  <div class="flex shrink-0 gap-1">
+                    <Button size="small" variant="ghost-muted" onClick={() => detail(item)}>{language.t("skillStore.details")}</Button>
+                    <Button size="small" variant="outline" disabled={busy(item.assetId)} onClick={() => install(item)}>{language.t(busy(item.assetId) ? "skillStore.installing" : "skillStore.install")}</Button>
+                  </div>
+                </div>
+                <Show when={state.detail?.asset.assetId === item.assetId}>
+                  <div class="mt-3 border-t border-border-base pt-3">
+                    <For each={state.detail?.versions ?? []}>{(version) => (
+                      <div class="flex items-center justify-between py-1 text-12-regular">
+                        <span>{version.version}</span>
+                        <Button size="small" variant="ghost-muted" onClick={() => install(item, version.version)}>{language.t("skillStore.installVersion")}</Button>
+                      </div>
+                    )}</For>
+                  </div>
+                </Show>
+              </div>
+            )}</For>
+          </div>
+        </Tabs.Content>
+        <Tabs.Content value="installed">
+          <div class="mt-4 flex flex-col gap-2">
+            <Show when={state.installations.length === 0}><p class="text-12-regular text-v2-text-text-muted">{language.t("skillStore.noInstalled")}</p></Show>
+            <For each={state.installations}>{(item) => {
+              const available = () => state.updates.find((update) => update.installationId === item.installationId)
+              return (
+                <div class="flex items-center justify-between gap-3 rounded-lg border border-border-base p-3">
+                  <div class="min-w-0">
+                    <div class="text-13-medium">{item.title}</div>
+                    <div class="mt-1 text-12-regular text-v2-text-text-muted">{item.description}</div>
+                    <div class="mt-1 text-11-regular text-v2-text-text-muted">{language.t("skillStore.version", { version: item.version })} · {item.runtimeSkillId}</div>
+                    <Show when={available()}>{(updateInfo) => <div class="mt-1 text-11-regular text-v2-text-text-muted">{language.t("skillStore.updateAvailable", { version: updateInfo().latestVersion })}</div>}</Show>
+                    <Show when={item.status !== "installed"}><div class="mt-1 text-11-regular text-text-danger">{item.status}</div></Show>
+                  </div>
+                  <div class="flex shrink-0 gap-1">
+                    <Show when={available()}>{(updateInfo) => <Button size="small" variant="outline" disabled={busy(item.installationId)} onClick={() => installUpdate(item, updateInfo().latestVersion)}>{language.t("skillStore.update")}</Button>}</Show>
+                    <Button size="small" variant="ghost-muted" disabled={busy(item.installationId)} onClick={() => toggle(item)}>{language.t(item.enabled ? "skillStore.disable" : "skillStore.enable")}</Button>
+                    <Button size="small" variant="ghost-muted" disabled={busy(item.installationId)} onClick={() => remove(item)}><Icon name="trash-2" />{language.t("skillStore.remove")}</Button>
+                  </div>
+                </div>
+              )
+            }}</For>
+          </div>
+          <Show when={state.operations.length > 0}>
+            <div class="mt-4 border-t border-border-base pt-3">
+              <div class="text-12-medium">{language.t("skillStore.operations")}</div>
+              <For each={state.operations.slice(0, 5)}>{(operation) => {
+                const active = () => operation.state === "queued" || operation.state === "running"
+                const failed = () => operation.state === "failed" || operation.state === "interrupted"
+                return (
+                  <div class="mt-2 rounded-md bg-background-base p-2 text-12-regular" data-state={operation.state}>
+                    <div class="flex justify-between gap-3">
+                      <span>{operation.title} · {operation.stage}</span>
+                      <span class={failed() ? "text-text-danger" : "text-v2-text-text-muted"}>{operation.state}{active() ? " · " + operation.progress + "%" : ""}</span>
+                    </div>
+                    <div class="mt-1 text-11-regular text-v2-text-text-muted">{operation.error || operation.message}</div>
+                    <Show when={active()}>
+                      <div class="mt-2 h-1 overflow-hidden rounded bg-border-base"><div class="h-full bg-icon-strong" style={{ width: operation.progress + "%" }} /></div>
+                      <Button size="small" variant="ghost-muted" onClick={() => void cancelOperation(operation.operationId)}>{language.t("common.cancel")}</Button>
+                    </Show>
+                  </div>
+                )
+              }}</For>
+            </div>
+          </Show>
+        </Tabs.Content>
+      </Tabs>
+    </div>
+  )
+}
