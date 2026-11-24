@@ -112,7 +112,11 @@ export const SettingsSkillStore: Component<{ directory?: string; onRuntimeRefres
     } finally { setBusy(item.installationId, false) }
   }
   const cancelOperation = async (operationId: string) => {
-    try { await rpc().operationCancel({ operationId }, { location: { directory: locationDirectory() } }); void refreshInstalledQuietly() }
+    try {
+      const result = await rpc().operationCancel({ operationId }, { location: { directory: locationDirectory() } }) as { cancelled: boolean }
+      await refreshInstalledQuietly()
+      if (!result.cancelled) showToast({ title: language.t("skillStore.cancelTooLate") })
+    }
     catch (error) { showToast({ title: language.t("common.requestFailed"), description: formatServerError(error, language.t) }) }
   }
   const checkUpdates = async () => {
@@ -253,7 +257,9 @@ export const SettingsSkillStore: Component<{ directory?: string; onRuntimeRefres
                     <div class="mt-1 text-11-regular text-v2-text-text-muted">{operation.error || operation.message}</div>
                     <Show when={active()}>
                       <div class="mt-2 h-1 overflow-hidden rounded bg-border-base"><div class="h-full bg-icon-strong" style={{ width: operation.progress + "%" }} /></div>
-                      <Button size="small" variant="ghost-muted" onClick={() => void cancelOperation(operation.operationId)}>{language.t("common.cancel")}</Button>
+                      <Show when={operation.stage !== "committing" && operation.stage !== "registering"}>
+                        <Button size="small" variant="ghost-muted" onClick={() => void cancelOperation(operation.operationId)}>{language.t("common.cancel")}</Button>
+                      </Show>
                     </Show>
                   </div>
                 )
