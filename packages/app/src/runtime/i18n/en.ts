@@ -1126,6 +1126,7 @@ export const dict = {
   "skillStore.updateCheck": "Update check complete",
   "skillStore.updatesFound": "{{count}} update(s) available",
   "skillStore.operations": "Operations",
+  "skillStore.cancelTooLate": "This operation can no longer be cancelled. Its current status has been refreshed.",
   "settings.extensions.plugins.loadFailed": "Could not load plugins",
   "settings.extensions.sources.loadFailed": "Could not load extension sources",
   "settings.extensions.console.temporary":
